@@ -14,8 +14,6 @@ class TaskListPage extends StatefulWidget {
 class _TaskListPageState extends State<TaskListPage> {
   static const int pageSize = 20;
   int _currentMax = pageSize;
-  List<Task>? _cachedTasks;
-  // bool _isLoading = true;
 
   @override
   Widget build(BuildContext context) {
@@ -26,60 +24,37 @@ class _TaskListPageState extends State<TaskListPage> {
       return const Center(child: Text('Usuário não autenticado'));
     }
 
-    return StreamBuilder<List<Map<String, dynamic>>>(
+    return StreamBuilder<List<Task>>(
       stream: taskProvider.streamTasks(auth.user!.uid),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting &&
-            _cachedTasks == null) {
-          // Shimmer loading
-          return ListView.builder(
-            itemCount: 6,
-            itemBuilder: (context, i) => const ListTile(
-              title: SizedBox(
-                height: 16,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(color: Colors.black12),
-                ),
-              ),
-              subtitle: SizedBox(
-                height: 12,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(color: Colors.black12),
-                ),
-              ),
-            ),
-          );
+            !snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
         }
-        final items = snapshot.data ??
-            _cachedTasks?.map((t) => t.toMap()..['id'] = t.id).toList() ??
-            [];
-        if (snapshot.hasData) {
-          _cachedTasks =
-              items.map((map) => Task.fromMap(map['id'], map)).toList();
-          // _isLoading = false;
-        }
-        if (items.isEmpty) {
+
+        final tasks = snapshot.data ?? [];
+
+        if (tasks.isEmpty) {
           return const Center(child: Text('Nenhuma tarefa encontrada'));
         }
-        // Ordena por data (descendente)
-        items.sort((a, b) => b['date'].compareTo(a['date']));
-        final limited = items.take(_currentMax).toList();
+
+        tasks.sort((a, b) => b.date.compareTo(a.date));
+        final limited = tasks.take(_currentMax).toList();
+
         return NotificationListener<ScrollNotification>(
           onNotification: (scrollInfo) {
             if (scrollInfo.metrics.pixels ==
                     scrollInfo.metrics.maxScrollExtent &&
-                _currentMax < items.length) {
-              setState(() {
-                _currentMax += pageSize;
-              });
+                _currentMax < tasks.length) {
+              setState(() => _currentMax += pageSize);
             }
             return false;
           },
           child: ListView.builder(
             itemCount: limited.length,
             itemBuilder: (context, i) {
-              final map = limited[i];
-              final task = Task.fromMap(map['id'], map);
+              final task = limited[i];
+
               return Dismissible(
                 key: Key(task.id),
                 direction: DismissDirection.endToStart,
@@ -139,14 +114,19 @@ class _TaskListPageState extends State<TaskListPage> {
                     trailing: Checkbox(
                       value: task.isDone,
                       onChanged: (v) async {
-                        setState(() {
-                          task.isDone = v ?? false;
-                        });
-                        await taskProvider.updateTask(task);
+                        final updated = task.copyWith(isDone: v ?? false);
+                        await taskProvider.updateTask(updated);
                       },
                     ),
-                    onTap: () => Navigator.pushNamed(context, '/task_form',
-                        arguments: task),
+                    onTap: () async {
+                      await Navigator.pushNamed(
+                        context,
+                        '/task_form',
+                        arguments: task,
+                      );
+
+                      setState(() {});
+                    },
                   ),
                 ),
               );

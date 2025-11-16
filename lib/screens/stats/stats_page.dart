@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../providers/auth_provider.dart';
-// import '../../providers/task_provider.dart';
-import '../../models/task.dart';
-import '../../services/firestore_service.dart';
-import '../../models/mood.dart';
 import 'package:fl_chart/fl_chart.dart';
+import '../../providers/mood_provider.dart';
+import '../../providers/auth_provider.dart';
 
 class StatsPage extends StatelessWidget {
   const StatsPage({super.key});
@@ -13,181 +10,125 @@ class StatsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final auth = Provider.of<AuthProvider>(context);
-    final userId = auth.user?.uid;
-    if (userId == null) {
-      return const Center(child: Text('Faça login para ver estatísticas'));
+    final moodProv = Provider.of<MoodProvider>(context);
+
+    if (auth.user == null) return const Center(child: Text('Faça login'));
+
+    moodProv.start(auth.user!.uid);
+
+    final moods = moodProv.moods;
+    if (moods.isEmpty) return const Center(child: Text('Sem dados de humor'));
+
+    final now = DateTime.now();
+    final lastWeek = now.subtract(const Duration(days: 6));
+    final recent = moods.where((m) => m.date.isAfter(lastWeek)).toList();
+
+    final moodMap = {0: '😞', 1: '😐', 2: '🙂', 3: '😄'};
+
+    final counts = {for (var key in moodMap.keys) key: 0};
+    for (var m in recent) {
+      if (counts.containsKey(m.moodLevel))
+        counts[m.moodLevel] = counts[m.moodLevel]! + 1;
     }
+
+    final maxCount = counts.values.isEmpty
+        ? 1
+        : (counts.values.reduce((a, b) => a > b ? a : b));
+
+    final barGroups = moodMap.entries.map((entry) {
+      final level = entry.key;
+      final value = counts[level]!.toDouble();
+      return BarChartGroupData(
+        x: level,
+        barRods: [
+          BarChartRodData(
+            toY: value,
+            width: 40,
+            borderRadius: BorderRadius.circular(8),
+            color: Theme.of(context).colorScheme.primary,
+            rodStackItems: [],
+          ),
+        ],
+        showingTooltipIndicators: value > 0 ? [0] : [],
+      );
+    }).toList();
+
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'Estatísticas',
-            style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+            'Humor nos últimos 7 dias',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
           Expanded(
-            child: StreamBuilder<List<Map<String, dynamic>>>(
-              stream: FirestoreService().streamCollection('tasks', userId),
-              builder: (context, taskSnapshot) {
-                if (taskSnapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                final tasks = (taskSnapshot.data ?? [])
-                    .map((t) => Task.fromMap(t['id'], t))
-                    .toList();
-                final totalTasks = tasks.length;
-                final completedTasks = tasks.where((t) => t.isDone).length;
-                final pendingTasks = totalTasks - completedTasks;
-
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        _StatCard(
-                          label: 'Total',
-                          value: totalTasks.toString(),
-                          color: Colors.blue,
-                        ),
-                        _StatCard(
-                          label: 'Concluídas',
-                          value: completedTasks.toString(),
-                          color: Colors.green,
-                        ),
-                        _StatCard(
-                          label: 'Pendentes',
-                          value: pendingTasks.toString(),
-                          color: Colors.orange,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 32),
-                    StreamBuilder<List<Map<String, dynamic>>>(
-                      stream:
-                          FirestoreService().streamCollection('moods', userId),
-                      builder: (context, moodSnapshot) {
-                        if (moodSnapshot.connectionState ==
-                            ConnectionState.waiting) {
-                          return const Center(
-                              child: CircularProgressIndicator());
-                        }
-                        final moods = (moodSnapshot.data ?? [])
-                            .map((m) => Mood.fromMap(m['id'], m))
-                            .toList();
-                        final moodAvg = moods.isNotEmpty
-                            ? (moods
-                                    .map((m) => m.moodLevel)
-                                    .reduce((a, b) => a + b) /
-                                moods.length)
-                            : 0.0;
-
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                _StatCard(
-                                  label: 'Humor Médio',
-                                  value: moodAvg.toStringAsFixed(2),
-                                  color: Colors.purple,
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 24),
-                            moods.length >= 2
-                                ? SizedBox(
-                                    height: 200,
-                                    child: LineChart(
-                                      LineChartData(
-                                        gridData: FlGridData(show: true),
-                                        titlesData: FlTitlesData(
-                                          leftTitles: AxisTitles(
-                                            sideTitles:
-                                                SideTitles(showTitles: true),
-                                          ),
-                                          bottomTitles: AxisTitles(
-                                            sideTitles:
-                                                SideTitles(showTitles: false),
-                                          ),
-                                        ),
-                                        borderData: FlBorderData(show: true),
-                                        lineBarsData: [
-                                          LineChartBarData(
-                                            spots: moods
-                                                .asMap()
-                                                .entries
-                                                .map((e) => FlSpot(
-                                                    e.key.toDouble(),
-                                                    e.value.moodLevel
-                                                        .toDouble()))
-                                                .toList(),
-                                            isCurved: true,
-                                            color: Colors.purple,
-                                            barWidth: 4,
-                                            dotData: FlDotData(show: true),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  )
-                                : const Text(
-                                    'Adicione mais registros de humor para ver o gráfico.'),
-                          ],
+            child: BarChart(
+              BarChartData(
+                alignment: BarChartAlignment.spaceAround,
+                maxY: (maxCount + 1).toDouble(),
+                barGroups: barGroups,
+                gridData: FlGridData(show: true),
+                borderData: FlBorderData(show: false),
+                titlesData: FlTitlesData(
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 48,
+                      getTitlesWidget: (val, meta) {
+                        final level = val.toInt();
+                        if (!moodMap.containsKey(level))
+                          return const SizedBox.shrink();
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            moodMap[level]!,
+                            style: const TextStyle(fontSize: 32),
+                          ),
                         );
                       },
                     ),
-                  ],
-                );
-              },
+                  ),
+                  leftTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      getTitlesWidget: (val, meta) {
+                        return Text(
+                          val.toInt().toString(),
+                          style: const TextStyle(fontSize: 12),
+                        );
+                      },
+                      reservedSize: 28,
+                    ),
+                  ),
+                ),
+                barTouchData: BarTouchData(
+                  enabled: true,
+                  touchTooltipData: BarTouchTooltipData(
+                    tooltipPadding: const EdgeInsets.all(8),
+                    tooltipMargin: 8,
+                    getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                      final level = group.x.toInt();
+                      final count = rod.toY.toInt();
+                      return BarTooltipItem(
+                        '${moodMap[level]}: $count',
+                        const TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.bold),
+                      );
+                    },
+                  ),
+                ),
+                extraLinesData: ExtraLinesData(horizontalLines: [
+                  HorizontalLine(
+                    y: 0,
+                    color: Colors.grey.shade300,
+                    strokeWidth: 1,
+                  )
+                ]),
+              ),
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _StatCard extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color color;
-  const _StatCard({
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      color: color.withOpacity(0.1),
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: color,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 16,
-                color: color,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

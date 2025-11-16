@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../models/mood.dart';
+import '../../providers/mood_provider.dart';
 import '../../providers/auth_provider.dart';
-import '../../services/firestore_service.dart';
-import 'package:fl_chart/fl_chart.dart';
+import '../../models/mood.dart';
+import 'package:uuid/uuid.dart';
 
 class MoodPage extends StatefulWidget {
   const MoodPage({super.key});
@@ -13,244 +13,206 @@ class MoodPage extends StatefulWidget {
 }
 
 class _MoodPageState extends State<MoodPage> {
-  int selected = 2;
+  int selected = 1;
   final controller = TextEditingController();
-  final FirestoreService _db = FirestoreService();
-  bool isSaving = false;
-  DateTime selectedDate = DateTime.now();
+  bool _saving = false;
+
+  String getMoodText(int level) {
+    switch (level) {
+      case 3:
+        return "Feliz";
+      case 2:
+        return "Ok";
+      case 1:
+        return "Neutro";
+      default:
+        return "Triste";
+    }
+  }
+
+  String getEmoji(int level) {
+    switch (level) {
+      case 3:
+        return "😄";
+      case 2:
+        return "🙂";
+      case 1:
+        return "😐";
+      default:
+        return "😞";
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final auth = Provider.of<AuthProvider>(context);
+    final moodProvider = Provider.of<MoodProvider>(context, listen: false);
+
+    if (auth.user == null) {
+      return const Center(child: Text('Faça login para registrar humor'));
+    }
+
+    moodProvider.start(auth.user!.uid);
+
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         children: [
-          const Text('Como você está hoje?', style: TextStyle(fontSize: 18)),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              const Text('Data: '),
-              TextButton(
-                onPressed: () async {
-                  final picked = await showDatePicker(
-                    context: context,
-                    initialDate: selectedDate,
-                    firstDate: DateTime(DateTime.now().year - 2),
-                    lastDate: DateTime.now(),
-                  );
-                  if (picked != null) setState(() => selectedDate = picked);
-                },
-                child: Text(
-                  '${selectedDate.day}/${selectedDate.month}/${selectedDate.year}',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ],
+          const Text(
+            'Como você está hoje?',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
+          const SizedBox(height: 12),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              IconButton(
-                  icon: const Icon(Icons.sentiment_very_dissatisfied),
-                  color: selected == 1 ? Colors.red : null,
-                  onPressed: () => setState(() => selected = 1)),
-              IconButton(
-                  icon: const Icon(Icons.sentiment_neutral),
-                  color: selected == 2 ? Colors.orange : null,
-                  onPressed: () => setState(() => selected = 2)),
-              IconButton(
-                  icon: const Icon(Icons.sentiment_very_satisfied),
-                  color: selected == 3 ? Colors.green : null,
-                  onPressed: () => setState(() => selected = 3)),
+              _moodIcon(0, '😞'),
+              _moodIcon(1, '😐'),
+              _moodIcon(2, '🙂'),
+              _moodIcon(3, '😄'),
             ],
           ),
           const SizedBox(height: 12),
           TextField(
             controller: controller,
-            decoration:
-                const InputDecoration(labelText: 'Anote algo (opcional)'),
+            decoration: const InputDecoration(
+              labelText: 'Anote algo (opcional)',
+              border: OutlineInputBorder(),
+            ),
             maxLines: 3,
           ),
           const SizedBox(height: 12),
           ElevatedButton(
-            onPressed: auth.user == null || isSaving
+            onPressed: _saving
                 ? null
                 : () async {
-                    setState(() => isSaving = true);
-                    // Evita registro duplicado no mesmo dia
-                    final now = selectedDate;
-                    final today = DateTime(now.year, now.month, now.day);
-                    // Busca apenas o primeiro registro do dia para evitar lentidão
-                    final query = await _db.db
-                        .collection('moods')
-                        .where('userId', isEqualTo: auth.user!.uid)
-                        .where('date',
-                            isGreaterThanOrEqualTo: today.toIso8601String())
-                        .where('date',
-                            isLessThan:
-                                DateTime(now.year, now.month, now.day + 1)
-                                    .toIso8601String())
-                        .limit(1)
-                        .get();
-                    if (query.docs.isNotEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                            content: Text('Você já registrou seu humor hoje.')),
+                    setState(() => _saving = true);
+                    try {
+                      final mood = Mood(
+                        id: const Uuid().v4(),
+                        userId: auth.user!.uid,
+                        moodLevel: selected,
+                        note: controller.text,
+                        date: DateTime.now(),
                       );
-                      setState(() => isSaving = false);
-                      return;
+                      await moodProvider.addMood(mood);
+
+                      controller.clear();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Humor registrado')),
+                      );
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Erro: $e')),
+                      );
+                    } finally {
+                      if (mounted) setState(() => _saving = false);
                     }
-                    final mood = Mood(
-                      id: '',
-                      userId: auth.user!.uid,
-                      moodLevel: selected,
-                      note: controller.text,
-                      date: selectedDate,
-                    );
-                    await _db.add('moods', mood.toMap());
-                    controller.clear();
-                    setState(() => isSaving = false);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Humor registrado!')));
                   },
-            child: isSaving
+            child: _saving
                 ? const SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2))
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
                 : const Text('Salvar'),
           ),
-          const SizedBox(height: 24),
-          const Text('Histórico de humor', style: TextStyle(fontSize: 16)),
-          const SizedBox(height: 8),
-          if (auth.user != null)
-            Expanded(
-              child: StreamBuilder<List<Map<String, dynamic>>>(
-                stream: _db.streamCollection('moods', auth.user!.uid),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  final items = snapshot.data ?? [];
-                  if (items.isEmpty) {
-                    return const Center(
-                        child: Text('Nenhum registro de humor'));
-                  }
-                  final moods = items
-                      .map((m) => Mood.fromMap(m['id'], m))
-                      .toList()
-                    ..sort((a, b) => a.date.compareTo(b.date));
-                  // Gráfico: últimos 14 dias (preenche dias sem registro)
-                  final now = DateTime.now();
-                  final days = List.generate(14, (i) {
-                    final d = DateTime(now.year, now.month, now.day - 13 + i);
-                    return d;
-                  });
-                  final moodMap = {
-                    for (var m in moods)
-                      '${m.date.year}-${m.date.month}-${m.date.day}': m
-                  };
-                  final spots = <FlSpot>[];
-                  for (int i = 0; i < days.length; i++) {
-                    final key =
-                        '${days[i].year}-${days[i].month}-${days[i].day}';
-                    final mood = moodMap[key];
-                    spots.add(FlSpot(
-                        i.toDouble(), (mood?.moodLevel ?? 2).toDouble()));
-                  }
-                  return Column(
-                    children: [
-                      SizedBox(
-                        height: 180,
-                        child: LineChart(
-                          LineChartData(
-                            lineBarsData: [
-                              LineChartBarData(
-                                spots: spots,
-                                isCurved: true,
-                                color: Colors.blue,
-                                dotData: FlDotData(show: true),
-                              ),
-                            ],
-                            titlesData: FlTitlesData(
-                              leftTitles: AxisTitles(
-                                sideTitles: SideTitles(
-                                    showTitles: true,
-                                    interval: 1,
-                                    getTitlesWidget: (v, _) {
-                                      switch (v.toInt()) {
-                                        case 1:
-                                          return const Text('Ruim');
-                                        case 2:
-                                          return const Text('Neutro');
-                                        case 3:
-                                          return const Text('Bom');
-                                        default:
-                                          return Text(v.toString());
-                                      }
-                                    }),
-                              ),
-                              bottomTitles: AxisTitles(
-                                sideTitles: SideTitles(
-                                    showTitles: true,
-                                    getTitlesWidget: (v, meta) {
-                                      if (v.toInt() < days.length) {
-                                        final d = days[v.toInt()];
-                                        return Text('${d.day}/${d.month}');
-                                      }
-                                      return const Text('');
-                                    }),
-                              ),
-                              topTitles: AxisTitles(
-                                  sideTitles: SideTitles(showTitles: false)),
-                              rightTitles: AxisTitles(
-                                  sideTitles: SideTitles(showTitles: false)),
-                            ),
-                            minY: 1,
-                            maxY: 3,
-                          ),
+          const SizedBox(height: 20),
+          Expanded(
+            child: Consumer<MoodProvider>(
+              builder: (context, prov, _) {
+                final list = prov.moods;
+
+                final reversed = list.reversed.toList();
+
+                if (list.isEmpty) {
+                  return const Center(child: Text('Nenhum registro'));
+                }
+
+                return ListView.builder(
+                  itemCount: reversed.length,
+                  itemBuilder: (context, i) {
+                    final m = reversed[i];
+
+                    return Card(
+                      margin: const EdgeInsets.symmetric(vertical: 6),
+                      child: ListTile(
+                        leading: Text(
+                          getEmoji(m.moodLevel),
+                          style: const TextStyle(fontSize: 28),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      Expanded(
-                        child: ListView.builder(
-                          itemCount: moods.length,
-                          itemBuilder: (context, i) {
-                            final m = moods[
-                                moods.length - 1 - i]; // mais recente primeiro
-                            return Card(
-                              margin: const EdgeInsets.symmetric(
-                                  vertical: 4, horizontal: 0),
-                              child: ListTile(
-                                leading: Icon(
-                                  m.moodLevel == 1
-                                      ? Icons.sentiment_very_dissatisfied
-                                      : m.moodLevel == 2
-                                          ? Icons.sentiment_neutral
-                                          : Icons.sentiment_very_satisfied,
-                                  color: m.moodLevel == 1
-                                      ? Colors.red
-                                      : m.moodLevel == 2
-                                          ? Colors.orange
-                                          : Colors.green,
-                                ),
-                                title: Text(m.note?.isNotEmpty == true
-                                    ? m.note!
-                                    : '(sem observação)'),
-                                subtitle: Text(
-                                    '${m.date.day}/${m.date.month} ${m.date.hour}:${m.date.minute.toString().padLeft(2, '0')}'),
+                        title: Text(
+                          getMoodText(m.moodLevel),
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 16),
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (m.note != null && m.note!.trim().isNotEmpty)
+                              Text(m.note!),
+                            Text(
+                              '${m.date.day}/${m.date.month}/${m.date.year}   '
+                              '${m.date.hour.toString().padLeft(2, '0')}:${m.date.minute.toString().padLeft(2, '0')}',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ],
+                        ),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () async {
+                            final confirm = await showDialog(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text('Excluir registro'),
+                                content: const Text(
+                                    'Tem certeza que deseja apagar este humor?'),
+                                actions: [
+                                  TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(ctx, false),
+                                      child: const Text('Cancelar')),
+                                  TextButton(
+                                      onPressed: () => Navigator.pop(ctx, true),
+                                      child: const Text('Excluir')),
+                                ],
                               ),
                             );
+
+                            if (confirm == true) {
+                              moodProvider.deleteMood(m.id);
+                            }
                           },
                         ),
                       ),
-                    ],
-                  );
-                },
-              ),
+                    );
+                  },
+                );
+              },
             ),
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _moodIcon(int value, String emoji) {
+    final selectedVal = selected == value;
+    return GestureDetector(
+      onTap: () => setState(() => selected = value),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: selectedVal ? Colors.blue.shade100 : Colors.grey.shade200,
+          border: Border.all(
+              color: selectedVal ? Colors.blue : Colors.transparent, width: 2),
+        ),
+        child: Text(
+          emoji,
+          style: const TextStyle(fontSize: 32),
+        ),
       ),
     );
   }

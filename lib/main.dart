@@ -2,32 +2,40 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
+
 import 'screens/login_screen.dart';
 import 'app.dart';
+
 import 'services/theme_service.dart';
 import 'services/notification_service.dart';
 import 'services/local_cache_service.dart';
 import 'firebase_options.dart';
 
+import 'providers/auth_provider.dart';
+import 'providers/task_provider.dart';
+import 'providers/mood_provider.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Inicializa Firebase
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // Inicializa Hive (modo offline)
   await Hive.initFlutter();
   await LocalCacheService.init();
 
-  // Inicializa notificações
   await NotificationService.init();
   await NotificationService.scheduleDailyReminder();
 
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => ThemeService(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => ThemeService()),
+        ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider(create: (_) => TaskProvider()),
+        ChangeNotifierProvider(create: (_) => MoodProvider()),
+      ],
       child: const MyApp(),
     ),
   );
@@ -51,7 +59,9 @@ class FocusMeApp extends StatelessWidget {
       darkTheme: ThemeData(
         brightness: Brightness.dark,
         colorScheme: ColorScheme.fromSeed(
-            seedColor: Colors.deepPurple, brightness: Brightness.dark),
+          seedColor: Colors.deepPurple,
+          brightness: Brightness.dark,
+        ),
         useMaterial3: true,
       ),
       home: const LoginScreen(),
